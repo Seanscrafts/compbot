@@ -290,6 +290,44 @@ def skip(comp_id: int = typer.Argument(..., help="Competition ID to skip")):
 
 
 # ---------------------------------------------------------------------------
+# export
+# ---------------------------------------------------------------------------
+
+@app.command()
+def export(
+    out: str = typer.Option("competitions.csv", "--out", "-o", help="Output CSV filename")
+):
+    """Export all competitions to a CSV file (opens in Excel)."""
+    import csv, os
+    db.init_db()
+    rows = db.list_competitions()
+
+    if not rows:
+        console.print("[dim]No competitions to export.[/dim]")
+        raise typer.Exit()
+
+    path = os.path.join(os.path.dirname(__file__), out)
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(["ID", "Name", "Status", "Closing Date", "Added", "Filled At", "URL", "Warnings"])
+        for row in rows:
+            import json
+            warnings = ", ".join(json.loads(row["warnings"] or "[]"))
+            writer.writerow([
+                row["id"],
+                row["name"] or "",
+                row["status"],
+                row["closing_date"] or "",
+                (row["added_at"] or "")[:10],
+                (row["filled_at"] or "")[:10],
+                row["url"],
+                warnings,
+            ])
+
+    console.print(f"[green]Exported {len(rows)} competitions to {path}[/green]")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
