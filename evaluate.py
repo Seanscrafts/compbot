@@ -64,7 +64,7 @@ effort_level:
 
 usable_for_you logic:
   true  — prize is usable by a Cape Town resident: cash, vouchers, products shipped nationally, national experiences, or "vote for X" competitions where the voter wins.
-  false — ANY of: prize goes to someone else (charity/gifting); hard age/demographic exclusion; OR the prize is a location-specific experience (classes, gym, restaurant, spa, tickets) in a city OTHER than Cape Town (e.g. Johannesburg, Randburg, Durban, Pretoria). Always check prize descriptions for city/venue names.
+  false — ANY of: prize goes to someone else (charity/gifting); hard age/demographic exclusion; OR the prize requires RECURRING physical attendance in a city other than Cape Town — e.g. weekly/monthly classes, gym membership, ongoing lessons. One-off experiences (hotel stays, restaurant meals, event tickets, spa days) in other cities are still usable=true since they can be used when travelling or gifted.
 
 recommendation logic:
   enter  — legitimacy >= 7 AND effort != high AND prize_value_zar > 0 AND usable_for_you = true AND no "purchase" barrier
