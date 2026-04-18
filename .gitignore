@@ -1,0 +1,7 @@
+.env
+profile.json
+.venv/
+__pycache__/
+*.pyc
+*.png
+*.db
