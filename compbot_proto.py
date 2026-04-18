@@ -228,9 +228,17 @@ def display_extraction(data: dict):
     table.add_column("Source", style="dim", width=12)
 
     for i, field in enumerate(fields, 1):
-        value = field.get("draft_value") or f"[profile: {field.get('mapped_profile_key', '?')}]"
-        source = "drafted" if field.get("draft_value") else "profile"
-        table.add_row(str(i), field.get("label", "?"), field.get("field_type", "?"), str(value)[:60], source)
+        draft = field.get("draft_value") or ""
+        if str(draft).startswith("CHECK PAGE"):
+            value = "-- you fill this --"
+            source = "manual"
+        elif draft:
+            value = str(draft)[:60]
+            source = "drafted"
+        else:
+            value = f"[profile: {field.get('mapped_profile_key', '?')}]"
+            source = "profile"
+        table.add_row(str(i), field.get("label", "?"), field.get("field_type", "?"), value, source)
 
     console.print(table)
 

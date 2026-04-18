@@ -147,3 +147,32 @@ def url_exists(url: str) -> bool:
     with _connect() as conn:
         row = conn.execute("SELECT 1 FROM competitions WHERE url = ?", (url,)).fetchone()
         return row is not None
+
+
+def auto_export():
+    """Silently refresh competitions.csv after any DB change."""
+    import csv
+    from pathlib import Path
+    path = Path(__file__).parent / "competitions.csv"
+    rows = list_competitions()
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "ID", "Name", "Status", "Recommendation", "Legitimacy", "Scam Score",
+            "Prize (ZAR)", "Prize Type", "Effort", "Draw Type", "Usable", "Barriers",
+            "Closing Date", "Added", "Filled At", "Reason", "URL",
+        ])
+        for row in rows:
+            barriers = json.dumps(json.loads(row["barriers"] or "[]"))
+            prize_val = row["prize_value_zar"]
+            writer.writerow([
+                row["id"], row["name"] or "", row["status"],
+                row["recommendation"] or "", row["legitimacy_score"] or "",
+                row["scam_score"] or 0,
+                f"R{prize_val:,}" if prize_val else "", row["prize_type"] or "",
+                row["effort_level"] or "", row["draw_type"] or "",
+                "Yes" if row["usable_for_you"] else "No" if row["usable_for_you"] == 0 else "",
+                ", ".join(json.loads(row["barriers"] or "[]")),
+                row["closing_date"] or "", (row["added_at"] or "")[:10],
+                (row["filled_at"] or "")[:10], row["eval_reason"] or "", row["url"],
+            ])

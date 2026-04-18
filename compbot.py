@@ -127,6 +127,7 @@ def add(url: str = typer.Argument(..., help="Competition page URL")):
     console.print(f"  Reason:      [dim]{evaluation.get('reason', '')}[/dim]")
 
     comp_id = db.add_competition(url, extraction, scam_score=result.score, scam_flags=result.flags, evaluation=evaluation)
+    db.auto_export()
     console.print(f"\n[green]Saved as competition #{comp_id}[/green]")
     console.print(f"Run [bold]python compbot.py fill {comp_id}[/bold] when ready.")
 
@@ -388,6 +389,7 @@ async def _fill_async(comp_id: int, row):
         root.destroy()
 
     db.update_status(comp_id, "filled", filled_at=datetime.now(timezone.utc).isoformat())
+    db.auto_export()
     console.print(f"[green]Status updated to 'filled' for competition #{comp_id}[/green]")
 
     await context.close()
