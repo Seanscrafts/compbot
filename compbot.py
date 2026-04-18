@@ -26,6 +26,7 @@ from rich.table import Table
 import db
 import scam as scam_mod
 import evaluate as eval_mod
+import discover as discover_mod
 from compbot_proto import (
     EXTRACTION_PROMPT,
     call_claude,
@@ -411,6 +412,95 @@ def skip(comp_id: int = typer.Argument(..., help="Competition ID to skip")):
         raise typer.Exit(1)
     db.update_status(comp_id, "skipped")
     console.print(f"[dim]Competition #{comp_id} marked as skipped.[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# discover
+# ---------------------------------------------------------------------------
+
+@app.command()
+def discover(
+    limit: int = typer.Option(50, "--limit", "-l", help="Max URLs to pull per source"),
+    auto_add: bool = typer.Option(False, "--auto", "-a", help="Auto-add all new competitions without prompting"),
+):
+    """Scrape SA competition sites and add new competitions to the database."""
+    db.init_db()
+    profile = load_profile()
+
+    console.print("[bold]Discovering competitions...[/bold]")
+    found = discover_mod.discover_all(limit_per_source=limit)
+
+    new_urls = [f for f in found if not db.url_exists(f["url"])]
+    already_known = len(found) - len(new_urls)
+
+    console.print(f"Found [cyan]{len(found)}[/cyan] URLs — [green]{len(new_urls)} new[/green], [dim]{already_known} already tracked[/dim]\n")
+
+    if not new_urls:
+        console.print("[dim]Nothing new to add.[/dim]")
+        raise typer.Exit()
+
+    added = skipped = errors = 0
+
+    for item in new_urls:
+        url = item["url"]
+        source = item["source"]
+        console.print(f"[dim]─── {url}[/dim]")
+
+        try:
+            raw_html = fetch_page_httpx(url)
+            if len(extract_visible_text(raw_html)) < 200:
+                console.print(f"  [dim]Skipping — page returned no content[/dim]")
+                skipped += 1
+                continue
+
+            cleaned = clean_html(raw_html)
+            if len(cleaned) > 30000:
+                cleaned = cleaned[:30000]
+
+            prompt = (
+                EXTRACTION_PROMPT
+                .replace("{profile_json}", json.dumps(profile, indent=2))
+                .replace("{url}", url)
+                .replace("{html}", cleaned)
+            )
+            extraction = call_claude(prompt)
+
+            if not extraction.get("fields"):
+                console.print(f"  [dim]No form fields — skipping[/dim]")
+                skipped += 1
+                continue
+
+            scam_result = scam_mod.score(url, extraction)
+            evaluation = eval_mod.evaluate(
+                url=url,
+                competition_name=extraction.get("competition_name"),
+                html=cleaned,
+                profile=profile,
+                scam_score=scam_result.score,
+                scam_flags=scam_result.flags,
+            )
+
+            rec = evaluation.get("recommendation", "review")
+            prize_val = evaluation.get("prize_value_zar")
+            prize_str = f"R{prize_val:,}" if prize_val else "?"
+            rec_fmt = eval_mod.format_recommendation(rec)
+
+            comp_id = db.add_competition(url, extraction, scam_score=scam_result.score, scam_flags=scam_result.flags, evaluation=evaluation)
+            name = extraction.get("competition_name") or url.split("/")[-1]
+            console.print(f"  #{comp_id} {rec_fmt} {prize_str} — {name[:60]}")
+            added += 1
+
+        except Exception as e:
+            console.print(f"  [red]Error: {e}[/red]")
+            errors += 1
+
+    db.auto_export()
+    console.print(Panel(
+        f"Added: {added}    Skipped: {skipped}    Errors: {errors}\n"
+        f"Run [bold]python compbot.py list[/bold] to see all competitions.",
+        title="Discovery complete",
+        border_style="green",
+    ))
 
 
 # ---------------------------------------------------------------------------
