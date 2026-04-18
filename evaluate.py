@@ -18,8 +18,9 @@ EVALUATION_PROMPT = """You are evaluating a South African competition for a spec
 
 USER PROFILE:
 - Location: Cape Town, Western Cape, South Africa
-- Age: {age}, Gender: {gender}
+- Age: {age}, Gender: {gender}, married with a wife
 - Wants practical prizes: cash, vouchers, electronics, food, household goods, experiences
+- Beauty, wellness, spa, skincare, and grooming prizes are usable — wife will use them
 
 EXISTING RULE-BASED SCAM ANALYSIS (0-100 score, lower = safer):
 Scam score: {scam_score}/100
@@ -63,8 +64,8 @@ effort_level:
   high  = essay, purchase required, or multiple complex steps
 
 usable_for_you logic:
-  true  — prize is usable by a Cape Town resident: cash, vouchers, products shipped nationally, national experiences, or "vote for X" competitions where the voter wins.
-  false — ANY of: prize goes to someone else (charity/gifting); hard age/demographic exclusion; OR the prize requires RECURRING physical attendance in a city other than Cape Town — e.g. weekly/monthly classes, gym membership, ongoing lessons. One-off experiences (hotel stays, restaurant meals, event tickets, spa days) in other cities are still usable=true since they can be used when travelling or gifted.
+  true  — prize is usable by this household: cash, vouchers, products shipped nationally, national experiences, "vote for X" competitions, beauty/spa/wellness/skincare/grooming treatments (wife will use), or one-off experiences anywhere in SA (hotel stays, restaurant meals, spa days, event tickets — usable when travelling or gifted).
+  false — ANY of: prize goes to someone else (charity/gifting); hard exclusion by age/demographic that excludes both user AND spouse; prize is clearly for babies/young children only (nappies, potty training, kids clothing); OR the prize requires RECURRING physical attendance in a city other than Cape Town (weekly classes, gym membership, ongoing lessons).
 
 recommendation logic:
   enter  — legitimacy >= 7 AND effort != high AND prize_value_zar > 0 AND usable_for_you = true AND no "purchase" barrier

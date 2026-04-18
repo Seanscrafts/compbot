@@ -1,6 +1,9 @@
 """
 Competition discovery module for CompBot.
 Scrapes SA competition aggregator sites and returns fresh URLs.
+
+Strategy: scrape date-sorted listing pages (newest first) rather than sitemaps.
+Stop pagination early once we hit too many already-known URLs in a row.
 """
 
 import re
@@ -15,18 +18,37 @@ HEADERS = {
     "Accept-Language": "en-ZA,en;q=0.9",
 }
 
+# Each source can have:
+#   listing  — paginated listing URL (append ?page=N or &paged=N)
+#   sitemap  — fallback XML sitemap
+#   url_pattern — regex that individual competition URLs must match
 SOURCES = [
     {
         "name": "GivingMore",
-        "homepage": "https://givingmore.co.za",
+        "listing": "https://givingmore.co.za/online-competition-club/all-prizes/?orderby=date",
+        "listing_page_param": "paged",   # WordPress pagination param
         "sitemap": "https://givingmore.co.za/sitemap.xml",
         "url_pattern": r"https://givingmore\.co\.za/competitions/[a-z0-9\-]+/?$",
+    },
+    {
+        "name": "WinWinSA",
+        "listing": "https://winwinsa.co.za/competitions/",
+        "listing_page_param": "page",
+        "url_pattern": r"https://winwinsa\.co\.za/competition/[a-z0-9\-]+/?$",
+    },
+    {
+        "name": "AllCompetitions",
+        "listing": "https://www.allcompetitions.co.za/",
+        "listing_page_param": "page",
+        "url_pattern": r"https://www\.allcompetitions\.co\.za/competition/[a-z0-9\-]+/?$",
     },
 ]
 
 
-def _scrape_homepage(url: str, pattern: str) -> list[str]:
-    """Scrape competition links directly from a homepage."""
+def _scrape_listing_page(base_url: str, pattern: str, page_param: str, page_num: int) -> list[str]:
+    """Fetch one page of a listing and return matching competition URLs."""
+    sep = "&" if "?" in base_url else "?"
+    url = f"{base_url}{sep}{page_param}={page_num}" if page_num > 1 else base_url
     try:
         r = httpx.get(url, headers=HEADERS, timeout=15, follow_redirects=True)
         r.raise_for_status()
@@ -40,16 +62,15 @@ def _scrape_homepage(url: str, pattern: str) -> list[str]:
                 links.append(href)
         return links
     except Exception as e:
-        console.print(f"[yellow]Homepage scrape failed: {e}[/yellow]")
+        console.print(f"[yellow]  Page {page_num} failed: {e}[/yellow]")
         return []
 
 
 def _scrape_sitemap(url: str, pattern: str, limit: int = 200) -> list[str]:
-    """Extract competition URLs from an XML sitemap."""
+    """Fallback: extract competition URLs from an XML sitemap."""
     try:
         r = httpx.get(url, headers=HEADERS, timeout=20, follow_redirects=True)
         r.raise_for_status()
-        # Parse URLs from sitemap
         urls = re.findall(r"<loc>(https?://[^<]+)</loc>", r.text)
         matched = []
         seen = set()
@@ -66,38 +87,66 @@ def _scrape_sitemap(url: str, pattern: str, limit: int = 200) -> list[str]:
         return []
 
 
-def discover_all(limit_per_source: int = 50) -> list[dict]:
+def discover_all(
+    limit_per_source: int = 50,
+    known_urls: set | None = None,
+    stop_after_known: int = 10,
+) -> list[dict]:
     """
-    Scrape all configured sources and return list of dicts:
-    {"url": str, "source": str}
+    Scrape all configured sources, newest-first, and return:
+        [{"url": str, "source": str}, ...]
+
+    known_urls: set of URLs already in DB — used for early-stop pagination.
+    stop_after_known: stop paginating a source after this many consecutive known URLs.
     """
+    known_urls = known_urls or set()
     results = []
 
     for source in SOURCES:
         name = source["name"]
         pattern = source["url_pattern"]
+        page_param = source.get("listing_page_param", "page")
         console.print(f"[dim]Scraping {name}...[/dim]")
 
-        urls = []
+        seen = set()
+        collected = []
 
-        # Try sitemap first (more comprehensive)
-        if source.get("sitemap"):
-            urls = _scrape_sitemap(source["sitemap"], pattern, limit=limit_per_source)
-            console.print(f"[dim]  Sitemap: {len(urls)} URLs[/dim]")
+        if source.get("listing"):
+            consecutive_known = 0
+            for page_num in range(1, 20):  # max 20 pages
+                page_urls = _scrape_listing_page(source["listing"], pattern, page_param, page_num)
+                if not page_urls:
+                    break
 
-        # Fall back to homepage if sitemap yielded nothing
-        if not urls and source.get("homepage"):
-            urls = _scrape_homepage(source["homepage"], pattern)
-            console.print(f"[dim]  Homepage: {len(urls)} URLs[/dim]")
+                for u in page_urls:
+                    if u in seen:
+                        continue
+                    seen.add(u)
+                    if u in known_urls:
+                        consecutive_known += 1
+                    else:
+                        consecutive_known = 0
+                        collected.append(u)
 
-        # Always also grab homepage for freshest listings
-        if source.get("homepage"):
-            fresh = _scrape_homepage(source["homepage"], pattern)
-            for u in fresh:
-                if u not in [r["url"] for r in results] and u not in urls:
-                    urls.insert(0, u)  # prepend so newest run first
+                if consecutive_known >= stop_after_known:
+                    console.print(f"[dim]  Stopped at page {page_num} ({stop_after_known} consecutive known)[/dim]")
+                    break
 
-        for url in urls[:limit_per_source]:
+                if len(collected) >= limit_per_source:
+                    break
+
+            console.print(f"[dim]  Listing: {len(collected)} new URLs[/dim]")
+
+        # Sitemap fallback if listing yielded nothing
+        if not collected and source.get("sitemap"):
+            all_urls = _scrape_sitemap(source["sitemap"], pattern, limit=limit_per_source * 3)
+            for u in all_urls:
+                if u not in known_urls and u not in seen:
+                    collected.append(u)
+                    seen.add(u)
+            console.print(f"[dim]  Sitemap fallback: {len(collected)} new URLs[/dim]")
+
+        for url in collected[:limit_per_source]:
             results.append({"url": url, "source": name})
 
     return results

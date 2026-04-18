@@ -1,9 +1,18 @@
 {
-  "permissions": {
-    "allow": [
-      "Bash(cd \"D:/AI/COMPETITIONS\"*)",
-      "Bash(source .venv/Scripts/activate*)",
-      "Bash(cat \"C:\\Users\\preto\\AppData\\Local\\Temp\\claude\\*)"
-    ]
+    "permissions": {
+      "defaultMode": "acceptEdits",
+      "allow": [
+        "Write",
+        "Edit",
+        "Bash(pip list:*)",
+        "Bash(pip --version)",
+        "Bash(pip show:*)",
+        "Bash(python -m pip list)",
+        "Bash(python -m venv .venv)",
+        "Bash(.venv/Scripts/activate)",
+        "Bash(pip install:*)",
+        "Bash(python3 *)",
+        "Skill(update-config)"
+      ]
+    }
   }
-}

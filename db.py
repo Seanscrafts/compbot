@@ -51,6 +51,7 @@ def init_db():
             ("recommendation",   "TEXT"),
             ("eval_reason",      "TEXT"),
             ("evaluated_at",     "TEXT"),
+            ("source",           "TEXT"),
         ]
         for col, definition in migrations:
             try:
@@ -149,12 +150,30 @@ def url_exists(url: str) -> bool:
         return row is not None
 
 
+def add_skipped(url: str, reason: str, source: str | None = None) -> int:
+    """Quickly save a URL as skipped (no extraction needed). Returns new id."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO competitions (url, status, eval_reason, added_at, notes) VALUES (?, 'skipped', ?, ?, ?)",
+            (url, reason, now, source or ""),
+        )
+        return cur.lastrowid
+
+
+def all_urls() -> set:
+    """Return set of all tracked URLs (any status)."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT url FROM competitions").fetchall()
+        return {r["url"] for r in rows}
+
+
 def auto_export():
-    """Silently refresh competitions.csv — excludes skipped entries."""
+    """Silently refresh competitions.csv — all statuses included."""
     import csv
     from pathlib import Path
     path = Path(__file__).parent / "competitions.csv"
-    rows = [r for r in list_competitions() if r["status"] != "skipped"]
+    rows = list_competitions()
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
         writer.writerow([

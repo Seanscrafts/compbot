@@ -12,8 +12,9 @@ Usage:
 
 import asyncio
 import json
+import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -85,6 +86,13 @@ def add(url: str = typer.Argument(..., help="Competition page URL")):
 
     extraction = call_claude(prompt)
     display_extraction(extraction)
+
+    closing = extraction.get("closing_date")
+    if _is_closing_date_past(closing):
+        console.print(f"[yellow]Competition closing date ({closing}) is in the past — saving as skipped.[/yellow]")
+        db.add_skipped(url, f"competition closed: {closing}")
+        db.auto_export()
+        raise typer.Exit()
 
     if not extraction.get("fields"):
         console.print("[red]No form fields found -- not saving.[/red]")
@@ -313,6 +321,85 @@ def fill(comp_id: int = typer.Argument(..., help="Competition ID to fill")):
     asyncio.run(_fill_async(comp_id, row))
 
 
+_DATE_PATTERNS = [
+    r"(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{4})",    # 31/12/2024
+    r"(\d{4})[/\-\.](\d{1,2})[/\-\.](\d{1,2})",    # 2024-12-31
+    r"(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})",
+]
+_MONTHS = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
+
+def _is_closing_date_past(date_str: str | None) -> bool:
+    """Return True if date_str is a recognisable date in the past."""
+    if not date_str:
+        return False
+    s = date_str.strip()
+    today = date.today()
+    for pat in _DATE_PATTERNS:
+        m = re.search(pat, s, re.IGNORECASE)
+        if m:
+            try:
+                g = m.groups()
+                if len(g) == 3 and isinstance(g[1], str):  # month name
+                    d = date(int(g[2]), _MONTHS[g[1].lower()[:3]], int(g[0]))
+                elif len(g[0]) == 4:  # yyyy-mm-dd
+                    d = date(int(g[0]), int(g[1]), int(g[2]))
+                else:  # dd/mm/yyyy
+                    d = date(int(g[2]), int(g[1]), int(g[0]))
+                return d < today
+            except Exception:
+                pass
+    return False
+
+
+def _check_if_closed(page_text: str) -> str | None:
+    """Return a reason string if the competition looks closed, else None."""
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=60,
+            messages=[{"role": "user", "content": (
+                f"Is this competition still open for entries? Look for closing dates, 'competition closed', 'winner announced', or past dates.\n\n"
+                f"PAGE TEXT:\n{page_text[:2000]}\n\n"
+                f"Reply with ONLY one of:\n"
+                f"OPEN\n"
+                f"CLOSED: <reason in under 10 words>"
+            )}],
+        )
+        answer = msg.content[0].text.strip()
+        if answer.upper().startswith("CLOSED"):
+            return answer[7:].strip() if len(answer) > 7 else "competition is closed"
+        return None
+    except Exception:
+        return None
+
+
+def _ask_claude_field(label: str, page_text: str) -> str | None:
+    """Ask Claude to answer a single form question from the live page text."""
+    try:
+        prompt = (
+            f"Competition entry form. Extract the answer to this question from the page text below.\n"
+            f"QUESTION: {label}\n"
+            f"PAGE TEXT:\n{page_text[:3000]}\n\n"
+            f"Rules: Reply with ONLY the answer (1-6 words, no punctuation, no explanation). "
+            f"If the answer is not on the page, reply: UNKNOWN"
+        )
+        import anthropic
+        client = anthropic.Anthropic()
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=100,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        answer = msg.content[0].text.strip()
+        if answer.upper() == "UNKNOWN" or not answer:
+            return None
+        return answer
+    except Exception:
+        return None
+
+
 async def _fill_async(comp_id: int, row):
     from playwright.async_api import async_playwright
 
@@ -347,9 +434,28 @@ async def _fill_async(comp_id: int, row):
     filled_count = 0
     skipped_count = 0
 
+    # Grab page text once for answering unknown questions + date check
+    page_text = await page.evaluate("() => document.body.innerText")
+
+    # Check if competition is still open
+    closed = _check_if_closed(page_text)
+    if closed:
+        console.print(f"\n[red bold]Competition appears CLOSED: {closed}[/red bold]")
+        console.print("[yellow]Marking as skipped.[/yellow]")
+        await context.close()
+        await browser.close()
+        await pw.stop()
+        db.update_status(comp_id, "skipped")
+        db.auto_export()
+        return
+
     for i, field in enumerate(fields, 1):
         label = field.get("label", "Unknown")
         value = get_field_value(field, profile)
+
+        if not value:
+            # Try to answer with Claude using live page text
+            value = _ask_claude_field(label, page_text)
 
         if not value:
             console.print(f"  [{i}] {label}: [dim]skipped (no value)[/dim]")
@@ -366,10 +472,13 @@ async def _fill_async(comp_id: int, row):
             console.print(f"    [red]Element not found[/red]")
             skipped_count += 1
 
-    import os
-    screenshot_path = os.path.join(os.path.dirname(__file__), f"preview_{comp_id}.png")
-    await page.screenshot(path=screenshot_path, full_page=True)
-    console.print(f"\n[green]Screenshot: {screenshot_path}[/green]")
+    try:
+        import os
+        screenshot_path = os.path.join(os.path.dirname(__file__), f"preview_{comp_id}.png")
+        await page.screenshot(path=screenshot_path, full_page=True)
+        console.print(f"\n[green]Screenshot: {screenshot_path}[/green]")
+    except Exception:
+        console.print("[yellow]Could not take screenshot (browser may have been closed early).[/yellow]")
 
     console.print(Panel(
         f"Fields filled: {filled_count} / {len(fields)}\n"
@@ -378,20 +487,30 @@ async def _fill_async(comp_id: int, row):
         border_style="green",
     ))
 
-    import tkinter, tkinter.messagebox
-    if await check_for_captcha(page):
-        console.print("\n[bold yellow]CAPTCHA detected! Solve it in the browser, then click OK.[/bold yellow]")
-        root = tkinter.Tk(); root.withdraw()
-        tkinter.messagebox.showinfo("CompBot – Solve CAPTCHA", "All fields filled.\nSolve the CAPTCHA, then click OK to close.")
-        root.destroy()
-    else:
-        root = tkinter.Tk(); root.withdraw()
-        tkinter.messagebox.showinfo("CompBot – Done", "All fields filled.\nReview the browser, then click OK to close.")
-        root.destroy()
+    proceed = True
+    try:
+        import tkinter, tkinter.messagebox
+        if await check_for_captcha(page):
+            console.print("\n[bold yellow]CAPTCHA detected! Solve it in the browser, then click OK.[/bold yellow]")
+            root = tkinter.Tk(); root.withdraw()
+            proceed = tkinter.messagebox.askokcancel("CompBot – Solve CAPTCHA", "Solve the CAPTCHA, then click OK to mark as filled.\nClick Cancel to skip this competition.")
+            root.destroy()
+        else:
+            root = tkinter.Tk(); root.withdraw()
+            proceed = tkinter.messagebox.askokcancel("CompBot – Done", "Fields filled. Click OK to mark as filled.\nClick Cancel to skip this competition.")
+            root.destroy()
+    except Exception:
+        console.print("[yellow]Browser closed early — marking as skipped.[/yellow]")
+        proceed = False
 
-    db.update_status(comp_id, "filled", filled_at=datetime.now(timezone.utc).isoformat())
-    db.auto_export()
-    console.print(f"[green]Status updated to 'filled' for competition #{comp_id}[/green]")
+    if proceed:
+        db.update_status(comp_id, "filled", filled_at=datetime.now(timezone.utc).isoformat())
+        db.auto_export()
+        console.print(f"[green]#{comp_id} marked as filled.[/green]")
+    else:
+        db.update_status(comp_id, "skipped")
+        db.auto_export()
+        console.print(f"[yellow]#{comp_id} skipped.[/yellow]")
 
     await context.close()
     await browser.close()
@@ -415,6 +534,155 @@ def skip(comp_id: int = typer.Argument(..., help="Competition ID to skip")):
 
 
 # ---------------------------------------------------------------------------
+# fill-all
+# ---------------------------------------------------------------------------
+
+@app.command(name="fill-all")
+def fill_all(
+    rec: str = typer.Option("enter,review", "--rec", "-r", help="Comma-separated recommendations to include (enter/review/skip)"),
+    limit: int = typer.Option(0, "--limit", "-l", help="Max competitions to fill (0 = no limit)"),
+):
+    """Fill all pending competitions matching the given recommendations, one after another."""
+    db.init_db()
+
+    allowed_recs = {r.strip().lower() for r in rec.split(",")}
+    rows = db.list_competitions("pending")
+    rows = [r for r in rows if (r["recommendation"] or "review") in allowed_recs]
+
+    if limit:
+        rows = rows[:limit]
+
+    if not rows:
+        console.print(f"[dim]No pending competitions matching rec={rec}[/dim]")
+        raise typer.Exit()
+
+    console.print(f"[bold]Fill-all: {len(rows)} competitions (rec={rec})[/bold]")
+    done = errors = 0
+    for i, row in enumerate(rows, 1):
+        prize_val = row["prize_value_zar"]
+        prize_str = f"R{prize_val:,}" if prize_val else "?"
+        console.print(f"\n[bold cyan]── {i}/{len(rows)}: #{row['id']} {prize_str} — {row['name'] or '?'}[/bold cyan]")
+        try:
+            asyncio.run(_fill_async(row["id"], row))
+            done += 1
+        except Exception as e:
+            console.print(f"[red]Error on #{row['id']}: {e}[/red] — continuing...")
+            errors += 1
+
+    console.print(Panel(f"[green]fill-all complete — {done} filled, {errors} errors.[/green]", border_style="green"))
+
+
+# ---------------------------------------------------------------------------
+# re-eval
+# ---------------------------------------------------------------------------
+
+@app.command(name="re-eval")
+def re_eval(
+    status: str = typer.Option("skipped", "--status", "-s", help="Which status to re-evaluate (skipped/pending/all)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would change without writing to DB"),
+):
+    """Re-evaluate competitions with the current profile rules. Useful after changing evaluation logic."""
+    db.init_db()
+    profile = load_profile()
+
+    if status == "all":
+        rows = db.list_competitions()
+    else:
+        rows = db.list_competitions(status)
+
+    # Never re-evaluate competitions already filled or submitted
+    rows = [r for r in rows if r["status"] not in ("filled", "submitted")]
+    # Only re-eval entries that have stored HTML fields (i.e. were fully extracted)
+    rows = [r for r in rows if r["fields"] and r["fields"] != "[]"]
+
+    if not rows:
+        console.print(f"[dim]No competitions with status '{status}' and stored fields.[/dim]")
+        raise typer.Exit()
+
+    console.print(f"[bold]Re-evaluating {len(rows)} competitions (status={status})...[/bold]\n")
+
+    changed = skipped = errors = 0
+
+    for row in rows:
+        comp_id = row["id"]
+        url = row["url"]
+        name = row["name"] or url.split("/")[-1]
+        old_rec = row["recommendation"] or "?"
+        old_status = row["status"]
+
+        try:
+            # Re-fetch page for fresh HTML (cheaper: use stored name + URL only, re-eval from stored data)
+            raw_html = fetch_page_httpx(url)
+            cleaned = clean_html(raw_html)
+            if len(cleaned) > 30000:
+                cleaned = cleaned[:30000]
+
+            if len(extract_visible_text(raw_html)) < 200:
+                console.print(f"  #{comp_id} [dim]no content — skipping[/dim]")
+                skipped += 1
+                continue
+
+            scam_result = scam_mod.score(url, {"competition_name": row["name"], "fields": json.loads(row["fields"] or "[]")})
+            evaluation = eval_mod.evaluate(
+                url=url,
+                competition_name=row["name"],
+                html=cleaned,
+                profile=profile,
+                scam_score=scam_result.score,
+                scam_flags=scam_result.flags,
+            )
+
+            new_rec = evaluation.get("recommendation", "review")
+            new_status = old_status
+
+            # If was skipped and now should be entered/reviewed, flip back to pending
+            if old_status == "skipped" and new_rec in ("enter", "review"):
+                new_status = "pending"
+
+            rec_fmt = eval_mod.format_recommendation(new_rec)
+            changed_marker = " [green]← CHANGED[/green]" if new_rec != old_rec or new_status != old_status else ""
+            console.print(f"  #{comp_id} {rec_fmt} — {name[:55]}{changed_marker}")
+            if new_rec != old_rec:
+                console.print(f"    [dim]{old_rec} → {new_rec}: {evaluation.get('reason', '')}[/dim]")
+
+            if not dry_run:
+                with db._connect() as conn:
+                    conn.execute(
+                        """UPDATE competitions SET
+                            recommendation=?, eval_reason=?, legitimacy_score=?,
+                            effort_level=?, prize_value_zar=?, prize_type=?,
+                            usable_for_you=?, entry_method=?, draw_type=?,
+                            barriers=?, evaluated_at=?, status=?
+                           WHERE id=?""",
+                        (
+                            new_rec, evaluation.get("reason"), evaluation.get("legitimacy_score"),
+                            evaluation.get("effort_level"), evaluation.get("prize_value_zar"),
+                            evaluation.get("prize_type"),
+                            1 if evaluation.get("usable_for_you") else 0,
+                            evaluation.get("entry_method"), evaluation.get("draw_type"),
+                            json.dumps(evaluation.get("barriers", [])),
+                            datetime.now(timezone.utc).isoformat(),
+                            new_status, comp_id,
+                        ),
+                    )
+            changed += 1
+
+        except Exception as e:
+            console.print(f"  #{comp_id} [red]Error: {e}[/red]")
+            errors += 1
+
+    if not dry_run:
+        db.auto_export()
+
+    console.print(Panel(
+        f"Processed: {changed}    Skipped (no content): {skipped}    Errors: {errors}"
+        + ("\n[yellow]Dry run — no changes written.[/yellow]" if dry_run else ""),
+        title="Re-evaluation complete",
+        border_style="green",
+    ))
+
+
+# ---------------------------------------------------------------------------
 # discover
 # ---------------------------------------------------------------------------
 
@@ -428,20 +696,21 @@ def discover(
     profile = load_profile()
 
     console.print("[bold]Discovering competitions...[/bold]")
-    found = discover_mod.discover_all(limit_per_source=limit)
+    known_urls = db.all_urls()
+    found = discover_mod.discover_all(limit_per_source=limit, known_urls=known_urls)
 
-    new_urls = [f for f in found if not db.url_exists(f["url"])]
-    already_known = len(found) - len(new_urls)
+    already_known = len([f for f in found if f["url"] in known_urls])
+    new_items = [f for f in found if f["url"] not in known_urls]
 
-    console.print(f"Found [cyan]{len(found)}[/cyan] URLs — [green]{len(new_urls)} new[/green], [dim]{already_known} already tracked[/dim]\n")
+    console.print(f"Found [cyan]{len(found)}[/cyan] URLs — [green]{len(new_items)} new[/green], [dim]{already_known} already tracked[/dim]\n")
 
-    if not new_urls:
+    if not new_items:
         console.print("[dim]Nothing new to add.[/dim]")
         raise typer.Exit()
 
     added = skipped = errors = 0
 
-    for item in new_urls:
+    for item in new_items:
         url = item["url"]
         source = item["source"]
         console.print(f"[dim]─── {url}[/dim]")
@@ -449,7 +718,8 @@ def discover(
         try:
             raw_html = fetch_page_httpx(url)
             if len(extract_visible_text(raw_html)) < 200:
-                console.print(f"  [dim]Skipping — page returned no content[/dim]")
+                console.print(f"  [dim]No content — saving as skipped[/dim]")
+                db.add_skipped(url, "page returned no content", source)
                 skipped += 1
                 continue
 
@@ -465,8 +735,17 @@ def discover(
             )
             extraction = call_claude(prompt)
 
+            # Check closing date before spending more API calls
+            closing = extraction.get("closing_date")
+            if _is_closing_date_past(closing):
+                console.print(f"  [dim]Closed ({closing}) — saving as skipped[/dim]")
+                db.add_skipped(url, f"competition closed: {closing}", source)
+                skipped += 1
+                continue
+
             if not extraction.get("fields"):
-                console.print(f"  [dim]No form fields — skipping[/dim]")
+                console.print(f"  [dim]No form fields — saving as skipped[/dim]")
+                db.add_skipped(url, "no entry form fields found", source)
                 skipped += 1
                 continue
 
@@ -487,8 +766,15 @@ def discover(
 
             comp_id = db.add_competition(url, extraction, scam_score=scam_result.score, scam_flags=scam_result.flags, evaluation=evaluation)
             name = extraction.get("competition_name") or url.split("/")[-1]
-            console.print(f"  #{comp_id} {rec_fmt} {prize_str} — {name[:60]}")
-            added += 1
+
+            # Save skip-recommended entries as skipped immediately
+            if rec == "skip":
+                db.update_status(comp_id, "skipped")
+                console.print(f"  #{comp_id} [dim]SKIP[/dim] {prize_str} — {name[:60]}")
+                skipped += 1
+            else:
+                console.print(f"  #{comp_id} {rec_fmt} {prize_str} — {name[:60]}")
+                added += 1
 
         except Exception as e:
             console.print(f"  [red]Error: {e}[/red]")
