@@ -150,11 +150,11 @@ def url_exists(url: str) -> bool:
 
 
 def auto_export():
-    """Silently refresh competitions.csv after any DB change."""
+    """Silently refresh competitions.csv — excludes skipped entries."""
     import csv
     from pathlib import Path
     path = Path(__file__).parent / "competitions.csv"
-    rows = list_competitions()
+    rows = [r for r in list_competitions() if r["status"] != "skipped"]
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
         writer.writerow([
