@@ -237,9 +237,10 @@ def display_extraction(data: dict):
 
 def get_field_value(field: dict, profile: dict) -> str | None:
     """Determine the value to fill for a given field."""
-    # If Claude drafted a custom answer, use that
-    if field.get("draft_value"):
-        return field["draft_value"]
+    # If Claude drafted a custom answer, use that — but skip CHECK PAGE placeholders
+    draft = field.get("draft_value")
+    if draft and not str(draft).startswith("CHECK PAGE"):
+        return draft
 
     # If mapped to a profile key, use profile value
     key = field.get("mapped_profile_key")
