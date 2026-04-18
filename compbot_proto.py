@@ -251,71 +251,56 @@ def get_field_value(field: dict, profile: dict) -> str | None:
     return None
 
 
-async def find_element(page, field: dict):
+async def find_element(page, field: dict, scope=None):
     """
     Try multiple strategies to find the form element.
+    Uses Playwright locators (auto-retry, stale-safe) and picks first visible match.
     Fallback order: selector -> name -> id -> label -> placeholder.
     Returns the element handle or None.
     """
     strategies = []
 
-    # Strategy 1: Claude's CSS selector
     sel = field.get("selector", "")
     if sel:
-        strategies.append(("selector", sel))
+        # Split compound selectors like "#a #b" into just "#b" for locator
+        last = sel.strip().split()[-1]
+        strategies.append(("selector", last))
 
-    # Strategy 2: by name attribute
     name = field.get("name", "")
     if name:
         strategies.append(("name", f'[name="{name}"]'))
 
-    # Strategy 3: by id attribute
     input_id = field.get("input_id", "")
     if input_id:
         strategies.append(("id", f"#{input_id}"))
 
-    # Strategy 4: label-based lookup
     label = field.get("label", "")
     if label:
-        # Try finding a label element and then its associated input
-        strategies.append(("label", f'label:has-text("{label}")'))
+        strategies.append(("label_text", label))
 
-    # Strategy 5: by placeholder text
     placeholder = field.get("placeholder", "")
     if placeholder:
-        # Case-insensitive partial match on placeholder
-        escaped = placeholder.replace('"', '\\"')
-        strategies.append(("placeholder", f'[placeholder*="{escaped}" i]'))
+        strategies.append(("placeholder", f'[placeholder*="{placeholder}" i]'))
 
-    for strategy_name, sel in strategies:
+    for strategy_name, value in strategies:
         try:
-            if strategy_name == "label":
-                # Special handling: find label, then find its associated input
-                label_el = await page.query_selector(sel)
-                if label_el:
-                    # Check for 'for' attribute
-                    for_attr = await label_el.get_attribute("for")
-                    if for_attr:
-                        el = await page.query_selector(f"#{for_attr}")
-                        if el:
-                            console.print(f"    [dim]Found via label 'for' attr[/dim]")
-                            return el
-                    # Try next sibling or child input
-                    parent = await label_el.evaluate_handle("el => el.parentElement")
-                    el = await parent.as_element().query_selector("input, select, textarea")
-                    if el:
-                        console.print(f"    [dim]Found via label parent[/dim]")
-                        return el
+            if strategy_name == "label_text":
+                loc = page.get_by_label(value, exact=False)
             else:
-                el = await page.query_selector(sel)
-                if el:
-                    # Verify it's visible and interactable
-                    is_visible = await el.is_visible()
-                    if is_visible:
+                loc = page.locator(value)
+
+            # Among all matches, pick first that is visible
+            count = await loc.count()
+            for i in range(count):
+                el = loc.nth(i)
+                try:
+                    if await el.is_visible():
                         console.print(f"    [dim]Found via {strategy_name}[/dim]")
-                        return el
+                        return await el.element_handle()
+                except Exception:
+                    continue
         except Exception:
-            continue  # selector syntax error or stale element, try next
+            continue
 
     return None
 

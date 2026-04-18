@@ -62,6 +62,10 @@ effort_level:
   medium = requires a photo, creative answer, or account signup
   high  = essay, purchase required, or multiple complex steps
 
+usable_for_you logic:
+  true  — the ENTRANT/VOTER stands to win a prize. "Vote for X", "back your hero", "support an athlete" competitions where the supporter wins prizes count as usable=true.
+  false — only if the prize explicitly goes to someone else (charity nomination, gifting), or hard geographic/demographic exclusion applies to Cape Town resident aged 48.
+
 recommendation logic:
   enter  — legitimacy >= 7 AND effort != high AND prize_value_zar > 0 AND usable_for_you = true AND no "purchase" barrier
   skip   — legitimacy <= 4 OR scam_score >= 60 OR (effort = high AND prize_value_zar < 2000) OR usable_for_you = false

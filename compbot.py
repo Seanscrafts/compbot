@@ -282,12 +282,11 @@ async def _fill_async(comp_id: int, row):
         locale="en-ZA",
     )
     page = await context.new_page()
-    await page.goto(url, wait_until="networkidle", timeout=30000)
+    await page.goto(url, wait_until="load", timeout=45000)
 
     import asyncio as _asyncio
-    await _asyncio.sleep(2)
+    await _asyncio.sleep(4)  # extra time for JS-heavy pages to render forms
 
-    # Check if page needs re-extraction (JS-heavy, fields may differ)
     filled_count = 0
     skipped_count = 0
 
