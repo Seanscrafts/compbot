@@ -26,6 +26,8 @@ def init_db():
                 name        TEXT,
                 closing_date TEXT,
                 status      TEXT NOT NULL DEFAULT 'pending',
+                scam_score  INTEGER DEFAULT 0,
+                scam_flags  TEXT,
                 warnings    TEXT,
                 requirements TEXT,
                 fields      TEXT,
@@ -34,21 +36,29 @@ def init_db():
                 notes       TEXT
             )
         """)
+        # migrate existing DBs that lack the new columns
+        for col, definition in [("scam_score", "INTEGER DEFAULT 0"), ("scam_flags", "TEXT")]:
+            try:
+                conn.execute(f"ALTER TABLE competitions ADD COLUMN {col} {definition}")
+            except Exception:
+                pass
 
 
-def add_competition(url: str, extraction: dict) -> int:
+def add_competition(url: str, extraction: dict, scam_score: int = 0, scam_flags: list | None = None) -> int:
     """Insert a new competition from Claude's extraction output. Returns new id."""
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         cur = conn.execute(
             """
-            INSERT INTO competitions (url, name, closing_date, status, warnings, requirements, fields, added_at)
-            VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)
+            INSERT INTO competitions (url, name, closing_date, status, scam_score, scam_flags, warnings, requirements, fields, added_at)
+            VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
             """,
             (
                 url,
                 extraction.get("competition_name"),
                 extraction.get("closing_date"),
+                scam_score,
+                json.dumps(scam_flags or []),
                 json.dumps(extraction.get("warnings", [])),
                 json.dumps(extraction.get("requirements", [])),
                 json.dumps(extraction.get("fields", [])),

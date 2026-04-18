@@ -12,7 +12,11 @@ Usage:
 
 import asyncio
 import json
+import sys
 from datetime import datetime, timezone
+
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import typer
 from rich.console import Console
@@ -20,6 +24,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 import db
+import scam as scam_mod
 from compbot_proto import (
     EXTRACTION_PROMPT,
     call_claude,
@@ -83,7 +88,19 @@ def add(url: str = typer.Argument(..., help="Competition page URL")):
         console.print("[red]No form fields found -- not saving.[/red]")
         raise typer.Exit(1)
 
-    comp_id = db.add_competition(url, extraction)
+    result = scam_mod.score(url, extraction)
+    colour = result.colour
+    console.print(f"\nScam score: [{colour}]{result.label} ({result.score}/100)[/{colour}]")
+    for flag in result.flags:
+        console.print(f"  [yellow]^ {flag}[/yellow]")
+
+    if result.level == "high":
+        console.print(f"\n[red bold]High scam risk — not saving. Use --force to override.[/red bold]")
+        force = typer.confirm("Save anyway?", default=False)
+        if not force:
+            raise typer.Exit()
+
+    comp_id = db.add_competition(url, extraction, scam_score=result.score, scam_flags=result.flags)
     console.print(f"\n[green]Saved as competition #{comp_id}[/green]")
     console.print(f"Run [bold]python compbot.py fill {comp_id}[/bold] when ready to fill the form.")
 
@@ -106,21 +123,22 @@ def list_comps(
 
     table = Table(title="Competitions")
     table.add_column("ID", style="dim", width=4)
-    table.add_column("Name", style="cyan")
+    table.add_column("Name", style="cyan", min_width=30)
     table.add_column("Status", width=10)
+    table.add_column("Risk", width=14)
     table.add_column("Closing", width=12)
     table.add_column("Added", width=12)
-    table.add_column("URL", style="dim", overflow="fold")
 
     for row in rows:
         colour = STATUS_COLOURS.get(row["status"], "white")
+        s = scam_mod.ScamResult(score=row["scam_score"] or 0)
         table.add_row(
             str(row["id"]),
             row["name"] or "Unknown",
             f"[{colour}]{row['status']}[/{colour}]",
-            row["closing_date"] or "—",
+            f"[{s.colour}]{s.label}[/{s.colour}]",
+            row["closing_date"] or "-",
             (row["added_at"] or "")[:10],
-            row["url"],
         )
 
     console.print(table)
