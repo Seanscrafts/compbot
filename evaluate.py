@@ -63,8 +63,8 @@ effort_level:
   high  = essay, purchase required, or multiple complex steps
 
 usable_for_you logic:
-  true  — the ENTRANT/VOTER stands to win a prize. "Vote for X", "back your hero", "support an athlete" competitions where the supporter wins prizes count as usable=true.
-  false — only if the prize explicitly goes to someone else (charity nomination, gifting), or hard geographic/demographic exclusion applies to Cape Town resident aged 48.
+  true  — prize is usable by a Cape Town resident: cash, vouchers, products shipped nationally, national experiences, or "vote for X" competitions where the voter wins.
+  false — ANY of: prize goes to someone else (charity/gifting); hard age/demographic exclusion; OR the prize is a location-specific experience (classes, gym, restaurant, spa, tickets) in a city OTHER than Cape Town (e.g. Johannesburg, Randburg, Durban, Pretoria). Always check prize descriptions for city/venue names.
 
 recommendation logic:
   enter  — legitimacy >= 7 AND effort != high AND prize_value_zar > 0 AND usable_for_you = true AND no "purchase" barrier
