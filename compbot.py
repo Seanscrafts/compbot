@@ -25,6 +25,7 @@ from rich.table import Table
 
 import db
 import scam as scam_mod
+import evaluate as eval_mod
 from compbot_proto import (
     EXTRACTION_PROMPT,
     call_claude,
@@ -95,14 +96,39 @@ def add(url: str = typer.Argument(..., help="Competition page URL")):
         console.print(f"  [yellow]^ {flag}[/yellow]")
 
     if result.level == "high":
-        console.print(f"\n[red bold]High scam risk — not saving. Use --force to override.[/red bold]")
+        console.print(f"\n[red bold]High scam risk detected.[/red bold]")
         force = typer.confirm("Save anyway?", default=False)
         if not force:
             raise typer.Exit()
 
-    comp_id = db.add_competition(url, extraction, scam_score=result.score, scam_flags=result.flags)
+    # --- Evaluate across 5 dimensions ---
+    evaluation = eval_mod.evaluate(
+        url=url,
+        competition_name=extraction.get("competition_name"),
+        html=cleaned,
+        profile=profile,
+        scam_score=result.score,
+        scam_flags=result.flags,
+    )
+
+    rec = evaluation.get("recommendation", "review")
+    prize_val = evaluation.get("prize_value_zar")
+    prize_str = f"R{prize_val:,}" if prize_val else "unknown"
+
+    console.print(f"\nRecommendation: {eval_mod.format_recommendation(rec)}")
+    console.print(f"  Legitimacy:  {evaluation.get('legitimacy_score', '?')}/10")
+    console.print(f"  Effort:      {evaluation.get('effort_level', '?')}")
+    console.print(f"  Prize:       {prize_str} ({evaluation.get('prize_type', '?')})")
+    console.print(f"  Draw type:   {evaluation.get('draw_type', '?')}")
+    console.print(f"  Usable:      {'Yes' if evaluation.get('usable_for_you') else 'No'}")
+    barriers = evaluation.get("barriers", [])
+    if barriers:
+        console.print(f"  Barriers:    {', '.join(barriers)}")
+    console.print(f"  Reason:      [dim]{evaluation.get('reason', '')}[/dim]")
+
+    comp_id = db.add_competition(url, extraction, scam_score=result.score, scam_flags=result.flags, evaluation=evaluation)
     console.print(f"\n[green]Saved as competition #{comp_id}[/green]")
-    console.print(f"Run [bold]python compbot.py fill {comp_id}[/bold] when ready to fill the form.")
+    console.print(f"Run [bold]python compbot.py fill {comp_id}[/bold] when ready.")
 
 
 # ---------------------------------------------------------------------------
@@ -121,24 +147,25 @@ def list_comps(
         console.print("[dim]No competitions found.[/dim]")
         raise typer.Exit()
 
-    table = Table(title="Competitions")
-    table.add_column("ID", style="dim", width=4)
-    table.add_column("Name", style="cyan", min_width=30)
-    table.add_column("Status", width=10)
-    table.add_column("Risk", width=14)
-    table.add_column("Closing", width=12)
-    table.add_column("Added", width=12)
+    table = Table(title="Competitions", expand=False)
+    table.add_column("ID", style="dim", width=4, no_wrap=True)
+    table.add_column("Name", style="cyan", max_width=32, no_wrap=True)
+    table.add_column("Status", width=8, no_wrap=True)
+    table.add_column("Rec.", width=7, no_wrap=True)
+    table.add_column("Prize", width=9, no_wrap=True)
 
     for row in rows:
         colour = STATUS_COLOURS.get(row["status"], "white")
-        s = scam_mod.ScamResult(score=row["scam_score"] or 0)
+        rec = row["recommendation"] or ""
+        prize_val = row["prize_value_zar"]
+        prize_str = f"R{prize_val:,}" if prize_val else "-"
+        name = (row["name"] or "Unknown")
         table.add_row(
             str(row["id"]),
-            row["name"] or "Unknown",
+            name,
             f"[{colour}]{row['status']}[/{colour}]",
-            f"[{s.colour}]{s.label}[/{s.colour}]",
-            row["closing_date"] or "-",
-            (row["added_at"] or "")[:10],
+            eval_mod.format_recommendation(rec) if rec else "[dim]-[/dim]",
+            prize_str,
         )
 
     console.print(table)
@@ -157,15 +184,38 @@ def show(comp_id: int = typer.Argument(..., help="Competition ID")):
         console.print(f"[red]No competition with ID {comp_id}[/red]")
         raise typer.Exit(1)
 
+    rec = row["recommendation"] or ""
+    prize_val = row["prize_value_zar"]
+    prize_str = f"R{prize_val:,}" if prize_val else "unknown"
+    barriers = json.loads(row["barriers"] or "[]")
+
     console.print(Panel(
         f"[bold]{row['name'] or 'Unknown'}[/bold]\n"
         f"URL: {row['url']}\n"
-        f"Status: {row['status']}\n"
-        f"Closing: {row['closing_date'] or '—'}\n"
-        f"Added: {row['added_at']}\n"
-        f"Filled: {row['filled_at'] or '—'}",
+        f"Status: {row['status']}    Recommendation: {eval_mod.format_recommendation(rec) if rec else '-'}\n"
+        f"Closing: {row['closing_date'] or '-'}    Added: {(row['added_at'] or '')[:10]}    Filled: {(row['filled_at'] or '')[:10] or '-'}",
         title=f"Competition #{comp_id}",
     ))
+
+    # Evaluation breakdown
+    if row["legitimacy_score"] is not None:
+        console.print("\n[bold]Evaluation[/bold]")
+        console.print(f"  Legitimacy:   {row['legitimacy_score']}/10  |  Scam score: {row['scam_score'] or 0}/100")
+        console.print(f"  Prize:        {prize_str} ({row['prize_type'] or '?'})")
+        console.print(f"  Effort:       {row['effort_level'] or '?'}")
+        console.print(f"  Entry method: {row['entry_method'] or '?'}")
+        console.print(f"  Draw type:    {row['draw_type'] or '?'}")
+        console.print(f"  Usable:       {'Yes' if row['usable_for_you'] else 'No' if row['usable_for_you'] == 0 else '?'}")
+        if barriers:
+            console.print(f"  Barriers:     {', '.join(barriers)}")
+        if row["eval_reason"]:
+            console.print(f"  Reason:       [dim]{row['eval_reason']}[/dim]")
+
+    scam_flags = json.loads(row["scam_flags"] or "[]")
+    if scam_flags:
+        console.print("\n[bold yellow]Scam flags:[/bold yellow]")
+        for f in scam_flags:
+            console.print(f"  ^ {f}")
 
     warnings = json.loads(row["warnings"] or "[]")
     if warnings:
@@ -327,19 +377,33 @@ def export(
     path = os.path.join(os.path.dirname(__file__), out)
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
-        writer.writerow(["ID", "Name", "Status", "Closing Date", "Added", "Filled At", "URL", "Warnings"])
+        writer.writerow([
+            "ID", "Name", "Status", "Recommendation", "Legitimacy", "Scam Score",
+            "Prize (ZAR)", "Prize Type", "Effort", "Draw Type", "Usable", "Barriers",
+            "Closing Date", "Added", "Filled At", "Reason", "URL",
+        ])
         for row in rows:
             import json
-            warnings = ", ".join(json.loads(row["warnings"] or "[]"))
+            barriers = ", ".join(json.loads(row["barriers"] or "[]"))
+            prize_val = row["prize_value_zar"]
             writer.writerow([
                 row["id"],
                 row["name"] or "",
                 row["status"],
+                row["recommendation"] or "",
+                row["legitimacy_score"] or "",
+                row["scam_score"] or 0,
+                f"R{prize_val:,}" if prize_val else "",
+                row["prize_type"] or "",
+                row["effort_level"] or "",
+                row["draw_type"] or "",
+                "Yes" if row["usable_for_you"] else "No" if row["usable_for_you"] == 0 else "",
+                barriers,
                 row["closing_date"] or "",
                 (row["added_at"] or "")[:10],
                 (row["filled_at"] or "")[:10],
+                row["eval_reason"] or "",
                 row["url"],
-                warnings,
             ])
 
     console.print(f"[green]Exported {len(rows)} competitions to {path}[/green]")

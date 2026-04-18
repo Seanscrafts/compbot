@@ -36,33 +36,83 @@ def init_db():
                 notes       TEXT
             )
         """)
-        # migrate existing DBs that lack the new columns
-        for col, definition in [("scam_score", "INTEGER DEFAULT 0"), ("scam_flags", "TEXT")]:
+        # migrate existing DBs that lack columns
+        migrations = [
+            ("scam_score",       "INTEGER DEFAULT 0"),
+            ("scam_flags",       "TEXT"),
+            ("legitimacy_score", "INTEGER"),
+            ("effort_level",     "TEXT"),
+            ("prize_value_zar",  "INTEGER"),
+            ("prize_type",       "TEXT"),
+            ("usable_for_you",   "INTEGER"),
+            ("entry_method",     "TEXT"),
+            ("draw_type",        "TEXT"),
+            ("barriers",         "TEXT"),
+            ("recommendation",   "TEXT"),
+            ("eval_reason",      "TEXT"),
+            ("evaluated_at",     "TEXT"),
+        ]
+        for col, definition in migrations:
             try:
                 conn.execute(f"ALTER TABLE competitions ADD COLUMN {col} {definition}")
             except Exception:
                 pass
 
 
-def add_competition(url: str, extraction: dict, scam_score: int = 0, scam_flags: list | None = None) -> int:
-    """Insert a new competition from Claude's extraction output. Returns new id."""
+def add_competition(
+    url: str,
+    extraction: dict,
+    scam_score: int = 0,
+    scam_flags: list | None = None,
+    evaluation: dict | None = None,
+) -> int:
+    """Insert a new competition. Returns new id."""
     now = datetime.now(timezone.utc).isoformat()
+    ev = evaluation or {}
+
+    # Sanitise closing_date — reject anything that isn't a plausible date string
+    def _clean_date(val):
+        if not val:
+            return None
+        val = str(val).strip()
+        if len(val) > 30 or val.upper().startswith("CHECK") or val.upper().startswith("UNKNOWN"):
+            return None
+        return val
+
     with _connect() as conn:
         cur = conn.execute(
             """
-            INSERT INTO competitions (url, name, closing_date, status, scam_score, scam_flags, warnings, requirements, fields, added_at)
-            VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
+            INSERT INTO competitions (
+                url, name, closing_date, status,
+                scam_score, scam_flags,
+                warnings, requirements, fields, added_at,
+                legitimacy_score, effort_level, prize_value_zar, prize_type,
+                usable_for_you, entry_method, draw_type, barriers,
+                recommendation, eval_reason, evaluated_at
+            )
+            VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 url,
                 extraction.get("competition_name"),
-                extraction.get("closing_date"),
+                _clean_date(ev.get("closes") or extraction.get("closing_date")),
                 scam_score,
                 json.dumps(scam_flags or []),
                 json.dumps(extraction.get("warnings", [])),
                 json.dumps(extraction.get("requirements", [])),
                 json.dumps(extraction.get("fields", [])),
                 now,
+                ev.get("legitimacy_score"),
+                ev.get("effort_level"),
+                ev.get("prize_value_zar"),
+                ev.get("prize_type"),
+                1 if ev.get("usable_for_you") else 0 if ev.get("usable_for_you") is False else None,
+                ev.get("entry_method"),
+                ev.get("draw_type"),
+                json.dumps(ev.get("barriers", [])),
+                ev.get("recommendation"),
+                ev.get("reason"),
+                now if ev else None,
             ),
         )
         return cur.lastrowid
