@@ -172,6 +172,61 @@ def list_comps(
 
 
 # ---------------------------------------------------------------------------
+# review
+# ---------------------------------------------------------------------------
+
+@app.command()
+def review(comp_id: int = typer.Argument(..., help="Competition ID")):
+    """Quick human-friendly summary before deciding to fill."""
+    db.init_db()
+    row = db.get_competition(comp_id)
+    if not row:
+        console.print(f"[red]No competition with ID {comp_id}[/red]")
+        raise typer.Exit(1)
+
+    rec = row["recommendation"] or "review"
+    prize_val = row["prize_value_zar"]
+    prize_str = f"R{prize_val:,}" if prize_val else "Unknown"
+    barriers = json.loads(row["barriers"] or "[]")
+    warnings = json.loads(row["warnings"] or "[]")
+    fields = json.loads(row["fields"] or "[]")
+    profile = load_profile()
+
+    rec_colour = eval_mod.REC_COLOUR.get(rec, "white")
+
+    console.print(Panel(
+        f"[bold]{row['name'] or 'Unknown'}[/bold]\n"
+        f"{row['url']}",
+        title=f"#{comp_id}",
+    ))
+
+    console.print(f"\n  Decision:    [{rec_colour}][bold]{rec.upper()}[/bold][/{rec_colour}]")
+    console.print(f"  Prize:       {prize_str} ({row['prize_type'] or '?'})")
+    console.print(f"  Effort:      {row['effort_level'] or '?'}")
+    console.print(f"  Legitimacy:  {row['legitimacy_score'] or '?'}/10")
+    console.print(f"  Draw:        {row['draw_type'] or '?'}")
+    console.print(f"  Closing:     {row['closing_date'] or 'Not listed'}")
+    if barriers:
+        console.print(f"  Barriers:    {', '.join(barriers)}")
+    if row["eval_reason"]:
+        console.print(f"\n  [dim]{row['eval_reason']}[/dim]")
+
+    if warnings:
+        console.print("\n[yellow]Warnings:[/yellow]")
+        for w in warnings:
+            console.print(f"  - {w}")
+
+    if fields:
+        console.print("\n[bold]What will be filled:[/bold]")
+        for f in fields:
+            value = get_field_value(f, profile) or "[dim]-- you fill this --[/dim]"
+            label = f.get("label", "?")
+            console.print(f"  {label}: [cyan]{value}[/cyan]")
+
+    console.print(f"\nRun [bold]python compbot.py fill {comp_id}[/bold] to proceed.")
+
+
+# ---------------------------------------------------------------------------
 # show
 # ---------------------------------------------------------------------------
 
