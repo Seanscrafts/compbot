@@ -1,6 +1,6 @@
 # CompBot -- SA Competition Entry Agent
 
-## Project Status: Day 1 Prototype BUILT (2026-04-16)
+## Project Status: Day 3 — Working End-to-End (2026-04-19)
 
 The core prototype is ready to test. No submissions yet -- DRY RUN only.
 
@@ -67,16 +67,10 @@ python compbot_proto.py "https://some-competition.co.za/enter"
 
 ## What's NOT Built Yet (Next Steps)
 
-Priority order for when we continue:
-
-1. **Test with real SA competitions** -- find 3-5 URLs, run prototype, see what breaks
-2. **SQLite database** -- track competitions, entries, status lifecycle
-3. **Scam scoring** -- SA-specific red flags (SMS scams, ID theft, no CPA compliance)
-4. **Typer CLI** -- proper commands (`add`, `list`, `prepare`, `fill`, `status`)
-5. **Modular folder structure** -- split into discovery/evaluation/preparation/submission
-6. **RSS discovery** -- auto-find competitions from SA aggregator feeds
-7. **Scheduler** -- APScheduler for periodic discovery runs
-8. **Submit flow** -- `--allow-submit` flag with human confirmation
+1. **Submit flow** -- `--allow-submit` flag with human confirmation
+2. **Ollama integration** -- swap cheaper Claude calls to local Llama 3.1 70B
+3. **Fix Prized source** -- use Playwright for JS-rendered forms
+4. **Scheduler** -- APScheduler for periodic discovery runs
 
 ## Full Architecture Plan
 

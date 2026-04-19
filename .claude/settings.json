@@ -1,4 +1,7 @@
 {
+    "env": {
+      "OLLAMA_MODELS": "D:\\AI\\ollama\\models"
+    },
     "permissions": {
       "defaultMode": "acceptEdits",
       "allow": [

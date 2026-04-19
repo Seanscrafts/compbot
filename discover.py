@@ -42,6 +42,12 @@ SOURCES = [
         "listing_page_param": "page",
         "url_pattern": r"https://www\.allcompetitions\.co\.za/competition/[a-z0-9\-]+/?$",
     },
+    {
+        "name": "Prized",
+        "listing": "https://www.prized.co.za/competitions/",
+        "listing_page_param": "page",
+        "url_pattern": r"https://www\.prized\.co\.za/[a-z0-9\-]+/[a-z0-9\-]+/?$",
+    },
 ]
 
 

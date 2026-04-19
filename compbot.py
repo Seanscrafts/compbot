@@ -431,23 +431,61 @@ async def _fill_async(comp_id: int, row):
     import asyncio as _asyncio
     await _asyncio.sleep(4)  # extra time for JS-heavy pages to render forms
 
-    filled_count = 0
-    skipped_count = 0
+    # ── Pre-fill vetting ────────────────────────────────────────────────────
+    # Show the live page first so the user can decide before any filling happens.
+    import tkinter as _tk
+    import tkinter.ttk as _ttk
 
-    # Grab page text once for answering unknown questions + date check
-    page_text = await page.evaluate("() => document.body.innerText")
+    vet_result = {"proceed": False}
 
-    # Check if competition is still open
-    closed = _check_if_closed(page_text)
-    if closed:
-        console.print(f"\n[red bold]Competition appears CLOSED: {closed}[/red bold]")
-        console.print("[yellow]Marking as skipped.[/yellow]")
+    def _show_vet_dialog():
+        root = _tk.Tk()
+        root.title("CompBot – Vet this competition")
+        root.resizable(False, False)
+        root.attributes("-topmost", True)
+
+        name_label = row["name"] or url
+        _tk.Label(root, text=name_label[:80], wraplength=420, font=("Segoe UI", 10, "bold"), pady=6).pack(padx=16)
+        _tk.Label(root, text=url[:80], wraplength=420, font=("Segoe UI", 8), fg="gray").pack(padx=16)
+        _tk.Label(root, text="\nIs this competition open and worth entering?", font=("Segoe UI", 9)).pack(padx=16)
+
+        btn_frame = _tk.Frame(root, pady=12)
+        btn_frame.pack()
+
+        def on_enter():
+            vet_result["proceed"] = True
+            root.destroy()
+
+        def on_skip():
+            vet_result["proceed"] = False
+            root.destroy()
+
+        _tk.Button(btn_frame, text="Enter", bg="#2d8a4e", fg="white", font=("Segoe UI", 10, "bold"),
+                   width=12, command=on_enter).pack(side="left", padx=8)
+        _tk.Button(btn_frame, text="Skip", bg="#c0392b", fg="white", font=("Segoe UI", 10),
+                   width=12, command=on_skip).pack(side="left", padx=8)
+
+        root.mainloop()
+
+    import threading
+    t = threading.Thread(target=_show_vet_dialog, daemon=True)
+    t.start()
+    t.join()
+
+    if not vet_result["proceed"]:
+        console.print(f"[yellow]#{comp_id} vetted as Skip — skipping.[/yellow]")
         await context.close()
         await browser.close()
         await pw.stop()
         db.update_status(comp_id, "skipped")
         db.auto_export()
         return
+
+    filled_count = 0
+    skipped_count = 0
+
+    # Grab page text once for answering unknown questions
+    page_text = await page.evaluate("() => document.body.innerText")
 
     for i, field in enumerate(fields, 1):
         label = field.get("label", "Unknown")
