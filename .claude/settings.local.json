@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Write",
+      "Edit",
+      "Bash(pip list:*)",
+      "Bash(pip --version)",
+      "Bash(pip show:*)",
+      "Bash(python -m pip list)",
+      "Bash(python -m venv .venv)",
+      "Bash(.venv/Scripts/activate)",
+      "Bash(pip install:*)",
+      "Bash(python3 *)",
+      "Skill(update-config)",
+      "Bash(powershell *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(curl *)"
+    ],
+    "defaultMode": "acceptEdits"
+  }
+}

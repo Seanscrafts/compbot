@@ -28,6 +28,7 @@ import db
 import scam as scam_mod
 import evaluate as eval_mod
 import discover as discover_mod
+import ollama_client
 from compbot_proto import (
     EXTRACTION_PROMPT,
     call_claude,
@@ -376,7 +377,12 @@ def _check_if_closed(page_text: str) -> str | None:
 
 
 def _ask_claude_field(label: str, page_text: str) -> str | None:
-    """Ask Claude to answer a single form question from the live page text."""
+    """Answer a single form question — tries Ollama first, falls back to Claude Sonnet."""
+    # Try local Ollama first
+    answer = ollama_client.answer_field(label, page_text)
+    if answer:
+        return answer
+    # Fallback to Claude Sonnet
     try:
         prompt = (
             f"Competition entry form. Extract the answer to this question from the page text below.\n"
@@ -398,6 +404,25 @@ def _ask_claude_field(label: str, page_text: str) -> str | None:
         return answer
     except Exception:
         return None
+
+
+async def _fetch_playwright_html(url: str) -> str:
+    """Fetch a JS-rendered page and return its HTML."""
+    from playwright.async_api import async_playwright
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(headless=True)
+    ctx = await browser.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        locale="en-ZA",
+    )
+    page = await ctx.new_page()
+    await page.goto(url, wait_until="load", timeout=30000)
+    import asyncio as _asyncio
+    await _asyncio.sleep(3)
+    html = await page.content()
+    await browser.close()
+    await pw.stop()
+    return html
 
 
 async def _fill_async(comp_id: int, row):
@@ -754,7 +779,12 @@ def discover(
         console.print(f"[dim]─── {url}[/dim]")
 
         try:
-            raw_html = fetch_page_httpx(url)
+            # Use Playwright for JS-heavy sites, httpx for everything else
+            if "consumerrewards.co.za" in url:
+                raw_html = asyncio.run(_fetch_playwright_html(url))
+            else:
+                raw_html = fetch_page_httpx(url)
+
             if len(extract_visible_text(raw_html)) < 200:
                 console.print(f"  [dim]No content — saving as skipped[/dim]")
                 db.add_skipped(url, "page returned no content", source)

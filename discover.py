@@ -22,6 +22,45 @@ HEADERS = {
 #   listing  — paginated listing URL (append ?page=N or &paged=N)
 #   sitemap  — fallback XML sitemap
 #   url_pattern — regex that individual competition URLs must match
+# ConsumerRewards has no listing page — competitions are fixed known URLs.
+# We scrape the homepage to find active competition slugs.
+CONSUMER_REWARDS_BASE = "https://consumerrewards.co.za"
+CONSUMER_REWARDS_SKIP = {
+    "", "become-an-advertiser", "blog", "leaderboards",
+    "product-discovery", "tablet", "generator", "plans",
+    "privacy-policy", "terms", "contact",
+}
+
+def _discover_consumer_rewards(known_urls: set) -> list[dict]:
+    """Scrape consumerrewards.co.za homepage for active competition slugs."""
+    try:
+        r = httpx.get(CONSUMER_REWARDS_BASE, headers=HEADERS, timeout=15, follow_redirects=True)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        found = []
+        seen = set()
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip().rstrip("/")
+            # Handle both absolute and relative URLs
+            if href.startswith(CONSUMER_REWARDS_BASE):
+                slug = href.replace(CONSUMER_REWARDS_BASE, "").lstrip("/")
+            elif href.startswith("/") and not href.startswith("//"):
+                slug = href.lstrip("/")
+            else:
+                continue
+            if not slug or slug in CONSUMER_REWARDS_SKIP or "#" in slug or "?" in slug:
+                continue
+            url = f"{CONSUMER_REWARDS_BASE}/{slug}"
+            if url in seen or url in known_urls:
+                continue
+            seen.add(url)
+            found.append({"url": url, "source": "ConsumerRewards"})
+        return found
+    except Exception as e:
+        console.print(f"[yellow]  ConsumerRewards failed: {e}[/yellow]")
+        return []
+
+
 SOURCES = [
     {
         "name": "GivingMore",
@@ -41,12 +80,6 @@ SOURCES = [
         "listing": "https://www.allcompetitions.co.za/",
         "listing_page_param": "page",
         "url_pattern": r"https://www\.allcompetitions\.co\.za/competition/[a-z0-9\-]+/?$",
-    },
-    {
-        "name": "Prized",
-        "listing": "https://www.prized.co.za/competitions/",
-        "listing_page_param": "page",
-        "url_pattern": r"https://www\.prized\.co\.za/[a-z0-9\-]+/[a-z0-9\-]+/?$",
     },
 ]
 
@@ -154,5 +187,11 @@ def discover_all(
 
         for url in collected[:limit_per_source]:
             results.append({"url": url, "source": name})
+
+    # ConsumerRewards — fixed URL discovery
+    console.print("[dim]Scraping ConsumerRewards...[/dim]")
+    cr_items = _discover_consumer_rewards(known_urls)
+    console.print(f"[dim]  Found: {len(cr_items)} new URLs[/dim]")
+    results.extend(cr_items)
 
     return results
