@@ -1,4 +1,4 @@
-# CompBot Status — 2026-04-19
+# CompBot Status — 2026-04-19 (end of day)
 
 ## What's Built
 
@@ -48,30 +48,29 @@ python compbot.py skip <id>                 # Skip a single competition
 ## Competition Sources
 
 - **GivingMore** — `givingmore.co.za/online-competition-club/all-prizes/?orderby=date` (working)
-- **Prized** — `prized.co.za/competitions/` (added, but JS-rendered forms — no fields detected)
+- **ConsumerRewards** — `consumerrewards.co.za` (working — Playwright fetch, survey forms fully filled)
 - **WinWinSA** — `winwinsa.co.za/competitions/` (DNS failing)
 - **AllCompetitions** — `allcompetitions.co.za/` (DNS failing)
 
-## Session Stats (2026-04-19)
+## Session Stats (2026-04-19 EOD)
 
-- 87 competitions in DB total
-- 31 filled (entered)
-- 43 skipped
-- 13 pending
+- 103 competitions in DB total
+- **39 filled (entered)**
+- 57 skipped
+- 0 pending
 - 0 submitted (submit flow not yet built)
 
-## Local LLM — In Progress
+## Local LLM — LIVE
 
-- Ollama installed, model downloading: `llama3.1:70b-instruct-q4_K_M` (~40GB)
-- GPU: NVIDIA RTX 4090 Laptop (16GB VRAM) — can run 70B quantized
+- Ollama running: `llama3.1:70b-instruct-q4_K_M`
+- GPU: NVIDIA RTX 4090 Laptop (16GB VRAM)
 - Models stored at: `D:\AI\ollama\models`
-- Plan: swap `_check_if_closed()`, `evaluate()`, `_ask_claude_field()` to local Ollama
+- `ollama_client.py` wired into `_ask_claude_field()` — tries Ollama first, falls back to Claude
 - Form extraction stays on Claude Sonnet (too complex for local)
-- Expected API cost reduction: ~60-70%
 
 ## Next Priorities
 
 1. **Submit flow** — `--allow-submit` flag with human confirmation
-2. **Wire up Ollama** — swap cheaper calls to local LLM once model finishes downloading
-3. **Fix Prized** — use Playwright instead of httpx to detect JS-rendered forms
-4. **Scheduler** — APScheduler periodic discovery
+2. **Wire Ollama into evaluate** — swap evaluation calls to local LLM
+3. **Scheduler** — APScheduler periodic daily discovery
+4. **More sources** — investigate loquax.co.uk for international competitions
